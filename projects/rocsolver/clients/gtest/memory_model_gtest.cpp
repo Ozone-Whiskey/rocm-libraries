@@ -41,8 +41,10 @@
 /*************************************/
 
 // Test fixture for workspace management tests
-class WorkspaceHelperImplicit : public ::testing::Test
+class checkin_misc_memory_model : public ::testing::Test
 {
+    rocblas_handle handle;
+
 protected:
     void SetUp() override
     {
@@ -53,8 +55,6 @@ protected:
     {
         ASSERT_EQ(rocblas_destroy_handle(handle), rocblas_status_success);
     }
-
-    rocblas_handle handle;
 
     // Helper function to query workspace size
     template <typename Func, typename... Args>
@@ -72,7 +72,7 @@ protected:
 /***** 1. Device Memory Size Query Tests *****/
 /*************************************/
 
-TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_Deterministic)
+TEST_F(checkin_misc_memory_model, MemorySizeQuery_GETRF_Deterministic)
 {
     const rocblas_int n = 100;
     const rocblas_int lda = n;
@@ -101,11 +101,12 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_Deterministic)
     hipFree(dinfo);
 }
 
-TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_SizeScaling)
+TEST_F(checkin_misc_memory_model, MemorySizeQuery_GETRF_SizeScaling)
 {
-    const rocblas_int lda = 1000;
-    const rocblas_stride stA = lda * 1000;
-    const rocblas_stride stP = 1000;
+    const rocblas_int n = 100;
+    const rocblas_int lda = n;
+    const rocblas_stride stA = lda * n;
+    const rocblas_stride stP = n;
 
     double* dA;
     rocblas_int *dP, *dinfo;
@@ -114,25 +115,27 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_SizeScaling)
     ASSERT_EQ(hipMalloc(&dinfo, sizeof(rocblas_int) * 100), hipSuccess);
 
     // Query with increasing batch counts
-    size_t size_bc1 = query_workspace_size(rocsolver_dgetrf_strided_batched, 100, 100, dA, lda, stA,
-                                           dP, stP, dinfo, 1);
+    size_t size_bc1 = query_workspace_size(rocsolver_dgetrf_strided_batched, n, n, dA, lda, stA, dP,
+                                           stP, dinfo, 1);
 
-    size_t size_bc10 = query_workspace_size(rocsolver_dgetrf_strided_batched, 100, 100, dA, lda,
-                                            stA, dP, stP, dinfo, 10);
+    size_t size_bc10 = query_workspace_size(rocsolver_dgetrf_strided_batched, n, n, dA, lda, stA,
+                                            dP, stP, dinfo, 10);
 
-    size_t size_bc100 = query_workspace_size(rocsolver_dgetrf_strided_batched, 100, 100, dA, lda,
-                                             stA, dP, stP, dinfo, 100);
+    size_t size_bc100 = query_workspace_size(rocsolver_dgetrf_strided_batched, n, n, dA, lda, stA,
+                                             dP, stP, dinfo, 100);
 
     // Size should increase or stay the same with batch count (workspace may be shared)
-    EXPECT_LE(size_bc1, size_bc10);
-    EXPECT_LE(size_bc10, size_bc100);
+    EXPECT_LE(size_bc1 * 9, size_bc10);
+    EXPECT_GE(size_bc1 * 11, size_bc10);
+    EXPECT_LE(size_bc10 * 9, size_bc100);
+    EXPECT_GE(size_bc10 * 11, size_bc100);
 
     hipFree(dA);
     hipFree(dP);
     hipFree(dinfo);
 }
 
-TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_ComplexVsReal)
+TEST_F(checkin_misc_memory_model, MemorySizeQuery_ComplexVsReal)
 {
     const rocblas_int n = 100;
     const rocblas_int lda = n;
@@ -163,7 +166,8 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_ComplexVsReal)
     // Complex should require more memory (different scalar arrays)
     // At minimum, sizes should be positive
     EXPECT_GT(size_real, 0);
-    EXPECT_GT(size_complex, 0);
+    EXPECT_LE(size_real * 1.9, size_complex);
+    EXPECT_GE(size_real * 2.1, size_complex);
 
     hipFree(dA_real);
     hipFree(dP_real);
@@ -173,7 +177,7 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_ComplexVsReal)
     hipFree(dinfo_complex);
 }
 
-TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_EdgeCase_ZeroSize)
+TEST_F(checkin_misc_memory_model, MemorySizeQuery_EdgeCase_ZeroSize)
 {
     const rocblas_int n = 0;
     const rocblas_int lda = 1;
@@ -189,15 +193,19 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_EdgeCase_ZeroSize)
 
     // Zero-sized problem should require minimal or no workspace
     // The exact behavior depends on implementation
-    EXPECT_GE(size, 0);
+    EXPECT_EQ(size, 0);
 }
 
-TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_SmallVsLarge)
+TEST_F(checkin_misc_memory_model, MemorySizeQuery_GETRF_SmallVsLarge)
 {
-    const rocblas_stride stA_large = 1000 * 1000;
-    const rocblas_stride stP_large = 1000;
-    const rocblas_stride stA_small = 10 * 10;
-    const rocblas_stride stP_small = 10;
+    const rocblas_int n_large = 100;
+    const rocblas_int n_small = 10;
+    const rocblas_int lda_large = n_large;
+    const rocblas_int lda_small = n_small;
+    const rocblas_stride stA_large = lda_large * n_large;
+    const rocblas_stride stP_large = n_large;
+    const rocblas_stride stA_small = n_small * n_small;
+    const rocblas_stride stP_small = n_small;
 
     // Large problem
     double* dA_large;
@@ -206,8 +214,9 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_SmallVsLarge)
     ASSERT_EQ(hipMalloc(&dP_large, sizeof(rocblas_int) * stP_large * 10), hipSuccess);
     ASSERT_EQ(hipMalloc(&dinfo_large, sizeof(rocblas_int) * 10), hipSuccess);
 
-    size_t size_large = query_workspace_size(rocsolver_dgetrf_strided_batched, 1000, 1000, dA_large,
-                                             1000, stA_large, dP_large, stP_large, dinfo_large, 10);
+    size_t size_large
+        = query_workspace_size(rocsolver_dgetrf_strided_batched, n_large, n_large, dA_large,
+                               lda_large, stA_large, dP_large, stP_large, dinfo_large, 10);
 
     // Small problem
     double* dA_small;
@@ -216,8 +225,9 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_SmallVsLarge)
     ASSERT_EQ(hipMalloc(&dP_small, sizeof(rocblas_int) * stP_small * 10), hipSuccess);
     ASSERT_EQ(hipMalloc(&dinfo_small, sizeof(rocblas_int) * 10), hipSuccess);
 
-    size_t size_small = query_workspace_size(rocsolver_dgetrf_strided_batched, 10, 10, dA_small, 10,
-                                             stA_small, dP_small, stP_small, dinfo_small, 10);
+    size_t size_small
+        = query_workspace_size(rocsolver_dgetrf_strided_batched, n_small, n_small, dA_small,
+                               lda_small, stA_small, dP_small, stP_small, dinfo_small, 10);
 
     // Large problem should require more workspace
     EXPECT_GT(size_large, size_small);
@@ -234,7 +244,7 @@ TEST_F(WorkspaceHelperImplicit, MemorySizeQuery_GETRF_SmallVsLarge)
 /***** 2. Numerical Correctness Tests *****/
 /*************************************/
 
-TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_MultipleInvocations_GETRF)
+TEST_F(checkin_misc_memory_model, NumericalCorrectness_MultipleInvocations_GETRF)
 {
     const rocblas_int n = 50;
     const rocblas_int lda = n;
@@ -295,12 +305,14 @@ TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_MultipleInvocations_GETRF)
     hipFree(dinfo);
 }
 
-TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_AlternatingSizes)
+TEST_F(checkin_misc_memory_model, NumericalCorrectness_AlternatingSizes)
 {
     const rocblas_int n_large = 100;
     const rocblas_int n_small = 20;
-    const rocblas_stride stA_large = n_large * n_large;
-    const rocblas_stride stA_small = n_small * n_small;
+    const rocblas_int lda_large = n_large;
+    const rocblas_int lda_small = n_small;
+    const rocblas_stride stA_large = lda_large * n_large;
+    const rocblas_stride stA_small = lda_small * n_small;
     const rocblas_stride stP_large = n_large;
     const rocblas_stride stP_small = n_small;
 
@@ -317,11 +329,11 @@ TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_AlternatingSizes)
     // Initialize matrices
     for(int i = 0; i < n_large; i++)
         for(int j = 0; j < n_large; j++)
-            hA_large[i + j * n_large] = (i == j) ? 2.0 : 0.01;
+            hA_large[i + j * lda_large] = (i == j) ? 2.0 : 0.01;
 
     for(int i = 0; i < n_small; i++)
         for(int j = 0; j < n_small; j++)
-            hA_small[i + j * n_small] = (i == j) ? 3.0 : 0.02;
+            hA_small[i + j * lda_small] = (i == j) ? 3.0 : 0.02;
 
     rocblas_int hinfo;
 
@@ -331,7 +343,7 @@ TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_AlternatingSizes)
         // Large problem
         ASSERT_EQ(hipMemcpy(dA, hA_large.data(), sizeof(double) * stA_large, hipMemcpyHostToDevice),
                   hipSuccess);
-        rocblas_status status = rocsolver_dgetrf(handle, n_large, n_large, dA, n_large, dP, dinfo);
+        rocblas_status status = rocsolver_dgetrf(handle, n_large, n_large, dA, lda_large, dP, dinfo);
         EXPECT_EQ(status, rocblas_status_success);
         ASSERT_EQ(hipMemcpy(&hinfo, dinfo, sizeof(rocblas_int), hipMemcpyDeviceToHost), hipSuccess);
         EXPECT_EQ(hinfo, 0);
@@ -339,7 +351,7 @@ TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_AlternatingSizes)
         // Small problem
         ASSERT_EQ(hipMemcpy(dA, hA_small.data(), sizeof(double) * stA_small, hipMemcpyHostToDevice),
                   hipSuccess);
-        status = rocsolver_dgetrf(handle, n_small, n_small, dA, n_small, dP, dinfo);
+        status = rocsolver_dgetrf(handle, n_small, n_small, dA, lda_small, dP, dinfo);
         EXPECT_EQ(status, rocblas_status_success);
         ASSERT_EQ(hipMemcpy(&hinfo, dinfo, sizeof(rocblas_int), hipMemcpyDeviceToHost), hipSuccess);
         EXPECT_EQ(hinfo, 0);
@@ -354,7 +366,7 @@ TEST_F(WorkspaceHelperImplicit, NumericalCorrectness_AlternatingSizes)
 /***** 3. Nested Workspace Tests *****/
 /*************************************/
 
-TEST_F(WorkspaceHelperImplicit, NestedWorkspace_GESV_vs_GETRF_GETRS)
+TEST_F(checkin_misc_memory_model, NestedWorkspace_GESV_vs_GETRF_GETRS)
 {
     const rocblas_int n = 100;
     const rocblas_int nrhs = 10;
@@ -391,7 +403,7 @@ TEST_F(WorkspaceHelperImplicit, NestedWorkspace_GESV_vs_GETRF_GETRS)
     hipFree(dinfo);
 }
 
-TEST_F(WorkspaceHelperImplicit, NestedWorkspace_GESV_NumericalCorrectness)
+TEST_F(checkin_misc_memory_model, NestedWorkspace_GESV_NumericalCorrectness)
 {
     const rocblas_int n = 50;
     const rocblas_int nrhs = 5;
@@ -488,7 +500,7 @@ TEST_F(WorkspaceHelperImplicit, NestedWorkspace_GESV_NumericalCorrectness)
 /***** 4. User-Managed Memory Tests *****/
 /*************************************/
 
-TEST_F(WorkspaceHelperImplicit, UserManagedMemory_ExactAllocation)
+TEST_F(checkin_misc_memory_model, UserManagedMemory_ExactAllocation)
 {
     const rocblas_int n = 100;
     const rocblas_int lda = n;
@@ -536,7 +548,7 @@ TEST_F(WorkspaceHelperImplicit, UserManagedMemory_ExactAllocation)
     hipFree(dinfo);
 }
 
-TEST_F(WorkspaceHelperImplicit, UserManagedMemory_InsufficientAllocation)
+TEST_F(checkin_misc_memory_model, UserManagedMemory_InsufficientAllocation)
 {
     const rocblas_int n = 100;
     const rocblas_int lda = n;
@@ -580,7 +592,7 @@ TEST_F(WorkspaceHelperImplicit, UserManagedMemory_InsufficientAllocation)
 /***** 5. Batched Functions Tests *****/
 /*************************************/
 
-TEST_F(WorkspaceHelperImplicit, BatchedFunction_GETRF_Correctness)
+TEST_F(checkin_misc_memory_model, BatchedFunction_GETRF_Correctness)
 {
     const rocblas_int n = 30;
     const rocblas_int lda = n;
@@ -644,7 +656,7 @@ TEST_F(WorkspaceHelperImplicit, BatchedFunction_GETRF_Correctness)
 /***** 6. Stress Tests *****/
 /*************************************/
 
-TEST_F(WorkspaceHelperImplicit, StressTest_RapidAllocationDeallocation)
+TEST_F(checkin_misc_memory_model, StressTest_RapidAllocationDeallocation)
 {
     const rocblas_int n = 50;
     const rocblas_int lda = n;
@@ -679,7 +691,7 @@ TEST_F(WorkspaceHelperImplicit, StressTest_RapidAllocationDeallocation)
     hipFree(dinfo);
 }
 
-TEST_F(WorkspaceHelperImplicit, StressTest_RandomSizes)
+TEST_F(checkin_misc_memory_model, StressTest_RandomSizes)
 {
     const int num_iterations = 50;
     std::vector<rocblas_int> sizes = {10, 20, 30, 50, 70, 100, 150, 200};
